@@ -26,7 +26,7 @@ jobs:
       - id: m
         run: |
           all='["dolnoslaskie","kujawsko-pomorskie","lodzkie","lubelskie","lubuskie","malopolskie","mazowieckie","opolskie","podkarpackie","podlaskie","pomorskie","slaskie","swietokrzyskie","warminsko-mazurskie","wielkopolskie","zachodniopomorskie"]'
-          in="${{ inputs.regions }}"
+          in="$(python3 -c 'import sys;print(sys.argv[1].lower().translate(str.maketrans("ąćęłńóśźż","acelnoszz")))' "${{ inputs.regions }}")"
           if [ "$in" = "all" ]; then
             echo "matrix=$all" >> "$GITHUB_OUTPUT"
           else
