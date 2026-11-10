@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Serwer map w sieci domowej (zwykły HTTP) bywa wygodny przy ręcznej instalacji -->
+    <base-config cleartextTrafficPermitted="true" />
+    <!-- Lokalny serwer map offline działa po zwykłym HTTP na 127.0.0.1 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

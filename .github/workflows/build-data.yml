@@ -1,0 +1,131 @@
+name: Zbuduj dane map (mapy + trasy)
+
+# Uruchom ręcznie: Actions -> "Zbuduj dane map" -> Run workflow.
+# Dane trafiają do wydania "dane", skąd aplikacja pobiera mapy offline.
+
+on:
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: 'Województwa (po przecinku, np. mazowieckie,pomorskie) albo "all"'
+        default: "mazowieckie"
+      routing:
+        description: 'Zbuduj też paczkę "Polska – trasy" (trasy między województwami)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          all='["dolnoslaskie","kujawsko-pomorskie","lodzkie","lubelskie","lubuskie","malopolskie","mazowieckie","opolskie","podkarpackie","podlaskie","pomorskie","slaskie","swietokrzyskie","warminsko-mazurskie","wielkopolskie","zachodniopomorskie"]'
+          in="${{ inputs.regions }}"
+          if [ "$in" = "all" ]; then
+            echo "matrix=$all" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(echo "$in" | tr -d ' ' | jq -R -c 'split(",") | map(select(length>0))')" >> "$GITHUB_OUTPUT"
+          fi
+
+  region:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Narzędzia
+        run: |
+          sudo apt-get update && sudo apt-get install -y osmium-tool
+          pip install osmium numpy
+          curl -L -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: Pobierz OpenStreetMap (Geofabrik)
+        run: curl -L --fail -o region.osm.pbf "https://download.geofabrik.de/europe/poland/${{ matrix.region }}-latest.osm.pbf"
+
+      - name: Mapa (kafelki wektorowe PMTiles)
+        run: java -Xmx6g -jar planetiler.jar --osm-path=region.osm.pbf --output=map.pmtiles --download --force --storage=mmap --maxzoom=14
+
+      - name: Graf dróg i indeks wyszukiwania
+        run: |
+          osmium tags-filter region.osm.pbf w/highway n/place n/highway=speed_camera n/railway=level_crossing n/enforcement r/type=restriction -o roads.osm.pbf --overwrite
+          python3 tools/build_graph.py roads.osm.pbf out
+
+      - name: Zbierz pliki
+        run: |
+          mkdir -p dist
+          mv map.pmtiles "dist/${{ matrix.region }}-map.pmtiles"
+          mv out/roads.bin "dist/${{ matrix.region }}-roads.bin"
+          mv out/search.tsv "dist/${{ matrix.region }}-search.tsv"
+          mv out/warn.tsv "dist/${{ matrix.region }}-warn.tsv" || true
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dane-${{ matrix.region }}
+          path: dist/*
+          retention-days: 1
+          compression-level: 0
+
+  routing:
+    if: ${{ inputs.routing }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Narzędzia
+        run: |
+          sudo apt-get update && sudo apt-get install -y osmium-tool
+          pip install osmium numpy
+      - name: Polska - graf dróg
+        run: |
+          curl -L --fail -o poland.osm.pbf https://download.geofabrik.de/europe/poland-latest.osm.pbf
+          osmium tags-filter poland.osm.pbf w/highway n/place n/highway=speed_camera n/railway=level_crossing n/enforcement r/type=restriction -o roads.osm.pbf --overwrite
+          rm poland.osm.pbf
+          python3 tools/build_graph.py roads.osm.pbf out
+          mkdir -p dist
+          mv out/roads.bin dist/polska-roads.bin
+          mv out/search.tsv dist/polska-search.tsv
+          mv out/warn.tsv dist/polska-warn.tsv || true
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dane-polska
+          path: dist/*
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    needs: [region, routing]
+    if: ${{ always() && (needs.region.result == 'success' || needs.region.result == 'failure') && needs.routing.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dane-*
+          path: dist
+          merge-multiple: true
+      - name: Opublikuj w wydaniu "dane"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release view dane >/dev/null 2>&1 || gh release create dane --title "Dane map offline" --notes "Pliki map i tras pobierane przez aplikację. Nie usuwaj."
+          gh release download dane -p index.json -D dist --clobber || true
+          python3 tools/make_index.py dist
+          gh release upload dane dist/* --clobber

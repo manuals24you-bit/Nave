@@ -1,0 +1,56 @@
+name: Zbuduj aplikację (APK)
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore: ["tools/**", "README.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Czcionki mapy (Noto Sans, łacińskie zakresy znaków)
+        run: |
+          git clone --depth 1 https://github.com/protomaps/basemaps-assets /tmp/bm
+          font="Noto Sans Regular"
+          mkdir -p "app/src/main/assets/fonts/$font"
+          for r in 0-255 256-511 512-767 768-1023 1024-1279 7680-7935 8192-8447 8448-8703 8704-8959 9472-9727 9984-10239; do
+            cp "/tmp/bm/fonts/$font/$r.pbf" "app/src/main/assets/fonts/$font/" || echo "brak zakresu $r"
+          done
+          ls "app/src/main/assets/fonts/$font" | wc -l
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Zbuduj APK
+        run: >
+          gradle :app:assembleRelease --no-daemon
+          -PversionCode=${{ github.run_number }}
+          -PdataUrl=https://github.com/${{ github.repository }}/releases/download/dane
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Drogowskaz-apk
+          path: app/build/outputs/apk/release/app-release.apk
+
+      - name: Opublikuj APK w wydaniu "najnowsza" (łatwe pobranie na telefon)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk Drogowskaz.apk
+          gh release delete najnowsza --yes --cleanup-tag || true
+          gh release create najnowsza Drogowskaz.apk \
+            --title "Drogowskaz – najnowsza wersja" \
+            --notes "Pobierz Drogowskaz.apk na telefon i zainstaluj (zezwól na instalację z tego źródła). Build #${{ github.run_number }}."
