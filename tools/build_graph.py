@@ -288,6 +288,7 @@ def build(pbf, outdir):
     is_j[way_start] = True
     is_j[way_end - 1] = True
     J = np.nonzero(is_j)[0]
+    del uniq, inv, cnt, is_j
 
     # Odcinki = kolejne pozycje-skrzyżowania w obrębie tej samej drogi
     same = way_of[J[:-1]] == way_of[J[1:]]
@@ -314,6 +315,11 @@ def build(pbf, outdir):
     seg = np.sqrt(dlat * dlat + dlon * dlon) * 6371008.8
     cs = np.concatenate([[0.0], np.cumsum(seg)])
     e_len = (cs[eb] - cs[ea]).astype(np.float32)
+    min_lat = float(la.min()) - CELL_DEG
+    min_lon = float(lo.min()) - CELL_DEG
+    max_lat = float(la.max())
+    max_lon = float(lo.max())
+    del la, lo, dlat, dlon, seg, cs, way_end
 
     # Geometria odcinków (od from do to włącznie)
     glen = (eb - ea + 1)
@@ -322,6 +328,7 @@ def build(pbf, outdir):
     idx = np.repeat(ea - g_start[:-1], glen) + np.arange(G)
     g_lat = lat[idx]
     g_lon = lon[idx]
+    del idx, J, same
 
     ew = way_of[ea]
     e_attr = way_attr[ew]
@@ -340,31 +347,36 @@ def build(pbf, outdir):
     adj_start = np.searchsorted(src, np.arange(N + 1)).astype(np.int32)
     A = len(ent)
 
-    # Siatka przestrzenna
-    min_lat = float(la.min()) - CELL_DEG
-    min_lon = float(lo.min()) - CELL_DEG
-    cols = int(math.ceil((float(lo.max()) - min_lon) / CELL_DEG)) + 2
-    rows = int(math.ceil((float(la.max()) - min_lat) / CELL_DEG)) + 2
-    # próbkowanie segmentów co ~150 m
-    g_la = g_lat.astype(np.float64) / 1e7
-    g_lo = g_lon.astype(np.float64) / 1e7
-    edge_of_g = np.repeat(np.arange(E, dtype=np.int64), glen)
-    s_from = np.arange(G - 1)
-    valid = edge_of_g[s_from] == edge_of_g[s_from + 1]
-    s_from = s_from[valid]
-    d1 = np.radians(g_la[s_from + 1] - g_la[s_from])
-    d2 = np.radians(g_lo[s_from + 1] - g_lo[s_from]) * np.cos(np.radians(g_la[s_from]))
-    slen = np.sqrt(d1 * d1 + d2 * d2) * 6371008.8
-    ns = (np.ceil(slen / 150.0).astype(np.int64)) + 1
-    rep = np.repeat(s_from, ns)
-    k = np.arange(len(rep)) - np.repeat(np.concatenate([[0], np.cumsum(ns)[:-1]]), ns)
-    fr = k / np.repeat(ns - 1, ns).clip(min=1)
-    sl = g_la[rep] + (g_la[rep + 1] - g_la[rep]) * fr
-    so = g_lo[rep] + (g_lo[rep + 1] - g_lo[rep]) * fr
-    cell = ((sl - min_lat) / CELL_DEG).astype(np.int64) * cols + ((so - min_lon) / CELL_DEG).astype(np.int64)
-    pair = np.unique(cell * E + edge_of_g[rep])
+    # Siatka przestrzenna (przetwarzana porcjami, żeby nie zabrakło pamięci)
+    cols = int(math.ceil((max_lon - min_lon) / CELL_DEG)) + 2
+    rows = int(math.ceil((max_lat - min_lat) / CELL_DEG)) + 2
+    edge_of_g = np.repeat(np.arange(E, dtype=np.int32), glen)
+    s_all = np.nonzero(edge_of_g[:-1] == edge_of_g[1:])[0]
+    parts = []
+    CH = 4_000_000
+    for c0 in range(0, len(s_all), CH):
+        s_from = s_all[c0:c0 + CH]
+        a_la = g_lat[s_from].astype(np.float64) / 1e7
+        a_lo = g_lon[s_from].astype(np.float64) / 1e7
+        b_la = g_lat[s_from + 1].astype(np.float64) / 1e7
+        b_lo = g_lon[s_from + 1].astype(np.float64) / 1e7
+        d1 = np.radians(b_la - a_la)
+        d2 = np.radians(b_lo - a_lo) * np.cos(np.radians(a_la))
+        slen = np.sqrt(d1 * d1 + d2 * d2) * 6371008.8
+        ns = (np.ceil(slen / 150.0).astype(np.int64)) + 1
+        ridx = np.repeat(np.arange(len(s_from)), ns)
+        k = np.arange(len(ridx)) - np.repeat(np.concatenate([[0], np.cumsum(ns)[:-1]]), ns)
+        fr = k / np.repeat(ns - 1, ns).clip(min=1)
+        sl = a_la[ridx] + (b_la[ridx] - a_la[ridx]) * fr
+        so = a_lo[ridx] + (b_lo[ridx] - a_lo[ridx]) * fr
+        cell = ((sl - min_lat) / CELL_DEG).astype(np.int64) * cols + ((so - min_lon) / CELL_DEG).astype(np.int64)
+        parts.append(np.unique(cell * E + edge_of_g[s_from[ridx]].astype(np.int64)))
+        del a_la, a_lo, b_la, b_lo, d1, d2, slen, ns, ridx, k, fr, sl, so, cell
+    pair = np.unique(np.concatenate(parts))
+    del parts, s_all, edge_of_g
     p_cell = pair // E
     p_edge = (pair % E).astype(np.int32)
+    del pair
     cell_keys, cell_first = np.unique(p_cell, return_index=True)
     cell_start = np.append(cell_first, len(p_edge)).astype(np.int32)
     C = len(cell_keys)
