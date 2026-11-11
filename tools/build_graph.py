@@ -232,8 +232,6 @@ class Collector(osmium.SimpleHandler):
             attr |= F_TOLL
         if t.get("tunnel") in ("yes", "building_passage"):
             attr |= F_TUNNEL
-        if t.get("bridge") == "yes":
-            attr |= F_BRIDGE
         mf, mb = way_maxspeeds(t, hw)
         attr |= (mf & 0xFF) << 8
         attr |= (mb & 0xFF) << 16
