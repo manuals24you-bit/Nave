@@ -23,9 +23,9 @@ class DataManager(private val ctx: Context) {
 
     /** Adres danych: ustawienie w aplikacji (menu) albo wartość zapisana w buildzie. */
     var baseUrl: String
-        get() = (ctx.getSharedPreferences("settings", 0).getString("dataUrl", null)?.takeIf { it.isNotBlank() }
+        get() = (ctx.getSharedPreferences("settings", 0).getString("dataUrl2", null)?.takeIf { it.isNotBlank() }
             ?: BuildConfig.DATA_URL).trim().trimEnd('/')
-        set(v) { ctx.getSharedPreferences("settings", 0).edit().putString("dataUrl", v.trim()).apply() }
+        set(v) { ctx.getSharedPreferences("settings", 0).edit().putString("dataUrl2", v.trim()).apply() }
 
     private val root: File = (ctx.getExternalFilesDir(null) ?: ctx.filesDir).let { File(it, "packs") }
 
