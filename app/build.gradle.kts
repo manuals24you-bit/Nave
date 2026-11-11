@@ -5,7 +5,7 @@ plugins {
 
 // Adres, z którego aplikacja pobiera dane map (GitHub Release "dane").
 // Workflow ustawia go automatycznie na podstawie nazwy repozytorium.
-val dataUrl: String = (project.findProperty("dataUrl") as String?) ?: ""
+val dataUrl: String = (project.findProperty("dataUrl") as String?) ?: "https://github.com/manuals24you-bit/Nave/releases/download/dane"
 
 android {
     namespace = "pl.drogowskaz.nav"
